@@ -77,8 +77,7 @@ const handleOPTIONS = async () => {
 const BASE_URL = "https://generativelanguage.googleapis.com";
 const API_VERSION = "v1beta";
 
-// https://github.com/google-gemini/generative-ai-js/blob/cf223ff4a1ee5a2d944c53cddb8976136382bee6/src/requests/request.ts#L71
-const API_CLIENT = "genai-js/0.21.0"; // npm view @google/generative-ai version
+const API_CLIENT = "genai-js/0.21.0";
 const makeHeaders = (apiKey, more) => ({
   "x-goog-api-client": API_CLIENT,
   ...(apiKey && { "x-goog-api-key": apiKey }),
@@ -179,13 +178,11 @@ async function handleCompletions (req, apiKey) {
   switch (true) {
     case model.endsWith(":search"):
       model = model.substring(0, model.length - 7);
-      // eslint-disable-next-line no-fallthrough
     case req.model.endsWith("-search-preview"):
     case req.tools?.some(tool => tool.function?.name === 'googleSearch'):
       body.tools = body.tools || [];
       body.tools.push({googleSearch: {}});
   }
-  console.log(body.tools)
   const TASK = req.stream ? "streamGenerateContent" : "generateContent";
   let url = `${BASE_URL}/${API_VERSION}/models/${model}:${TASK}`;
   if (req.stream) { url += "?alt=sse"; }
@@ -570,8 +567,8 @@ const checkPromptBlock = (choices, promptFeedback, key) => {
   return true;
 };
 
-// 清洗 untrusted_tool_result 标签
-function cleanUntrustedToolResult(text) {
+// 只做最核心的清洗，不改动其他逻辑
+function cleanContent(text) {
   if (!text) return text;
   return text
     .replace(/<untrusted_tool_result[\s\S]*?>/g, '')
@@ -589,12 +586,13 @@ const processCompletionsResponse = (data, model, id) => {
     usage: data.usageMetadata && transformUsage(data.usageMetadata),
   };
 
-  if (obj.choices && obj.choices.length > 0) {
-    for (let choice of obj.choices) {
-      if (choice.message && choice.message.content) {
-        choice.message.content = cleanUntrustedToolResult(choice.message.content);
+  // 清洗非流式内容
+  if (obj.choices?.length) {
+    obj.choices.forEach(choice => {
+      if (choice.message?.content) {
+        choice.message.content = cleanContent(choice.message.content);
       }
-    }
+    });
   }
 
   if (obj.choices.length === 0 ) {
@@ -648,17 +646,18 @@ function toOpenAiStream (line, controller) {
   };
 
   // 清洗流式内容
-  if (obj.choices && obj.choices.length) {
-    for (let c of obj.choices) {
-      if (c.delta?.content) c.delta.content = cleanUntrustedToolResult(c.delta.content);
-    }
+  if (obj.choices?.length) {
+    obj.choices.forEach(c => {
+      if (c.delta?.content) {
+        c.delta.content = cleanContent(c.delta.content);
+      }
+    });
   }
 
   if (checkPromptBlock(obj.choices, data.promptFeedback, "delta")) {
     controller.enqueue(sseline(obj));
     return;
   }
-  console.assert(data.candidates.length === 1, "Unexpected candidates count: %d", data.candidates.length);
   const cand = obj.choices[0];
   cand.index = cand.index || 0;
   const finish_reason = cand.finish_reason;

@@ -197,7 +197,7 @@ async function handleCompletions (req, apiKey) {
 
   body = response.body;
   if (response.ok) {
-    let id = "chatcmpl-" + generateId(); //"chatcmpl-8pMMaqXMK68B3nyDBrapTDrhkHBQK";
+    let id = "chatcmpl-" + generateId();
     const shared = {};
     if (req.stream) {
       body = response.body
@@ -225,7 +225,7 @@ async function handleCompletions (req, apiKey) {
         }
       } catch (err) {
         console.error("Error parsing response:", err);
-        return new Response(body, fixCors(response)); // output as is
+        return new Response(body, fixCors(response));
       }
       body = processCompletionsResponse(body, model, id);
     }
@@ -267,12 +267,12 @@ const fieldsMap = {
   frequency_penalty: "frequencyPenalty",
   max_completion_tokens: "maxOutputTokens",
   max_tokens: "maxOutputTokens",
-  n: "candidateCount", // not for streaming
+  n: "candidateCount",
   presence_penalty: "presencePenalty",
   seed: "seed",
   stop: "stopSequences",
   temperature: "temperature",
-  top_k: "topK", // non-standard
+  top_k: "topK",
   top_p: "topP",
 };
 const thinkingBudgetMap = {
@@ -282,7 +282,6 @@ const thinkingBudgetMap = {
 };
 const transformConfig = (req) => {
   let cfg = {};
-  //if (typeof req.stop === "string") { req.stop = [req.stop]; } // no need
   for (let key in req) {
     const matchedKey = fieldsMap[key];
     if (matchedKey) {
@@ -298,7 +297,6 @@ const transformConfig = (req) => {
           cfg.responseMimeType = "text/x.enum";
           break;
         }
-        // eslint-disable-next-line no-fallthrough
       case "json_object":
         cfg.responseMimeType = "application/json";
         break;
@@ -405,15 +403,9 @@ const transformFnCalls = ({ tool_calls }) => {
 const transformMsg = async ({ content }) => {
   const parts = [];
   if (!Array.isArray(content)) {
-    // system, user: string
-    // assistant: string or null (Required unless tool_calls is specified.)
     parts.push({ text: content });
     return parts;
   }
-  // user:
-  // An array of content parts with a defined type.
-  // Supported options differ based on the model being used to generate the response.
-  // Can contain text, image, or audio inputs.
   for (const item of content) {
     switch (item.type) {
       case "text":
@@ -435,7 +427,7 @@ const transformMsg = async ({ content }) => {
     }
   }
   if (content.every(item => item.type === "image_url")) {
-    parts.push({ text: "" }); // to avoid "Unable to submit request because it must have a text parameter"
+    parts.push({ text: "" });
   }
   return parts;
 };
@@ -450,13 +442,12 @@ const transformMessages = async (messages) => {
         system_instruction = { parts: await transformMsg(item) };
         continue;
       case "tool":
-        // eslint-disable-next-line no-case-declarations
         let { role, parts } = contents[contents.length - 1] ?? {};
         if (role !== "function") {
           const calls = parts?.calls;
           parts = []; parts.calls = calls;
           contents.push({
-            role: "function", // ignored
+            role: "function",
             parts
           });
         }
@@ -480,7 +471,6 @@ const transformMessages = async (messages) => {
       contents.unshift({ role: "user", parts: { text: " " } });
     }
   }
-  //console.info(JSON.stringify(contents, 2));
   return { system_instruction, contents };
 };
 
@@ -520,13 +510,11 @@ const generateId = () => {
   return Array.from({ length: 29 }, randomChar).join("");
 };
 
-const reasonsMap = { //https://ai.google.dev/api/rest/v1/GenerateContentResponse#finishreason
-  //"FINISH_REASON_UNSPECIFIED": // Default value. This value is unused.
+const reasonsMap = {
   "STOP": "stop",
   "MAX_TOKENS": "length",
   "SAFETY": "content_filter",
   "RECITATION": "content_filter",
-  //"OTHER": "OTHER",
 };
 const SEP = "\n\n|>";
 const transformCandidates = (key, cand) => {
@@ -549,11 +537,10 @@ const transformCandidates = (key, cand) => {
   }
   message.content = message.content.join(SEP) || null;
   return {
-    index: cand.index || 0, // 0-index is absent in new -002 models response
+    index: cand.index || 0,
     [key]: message,
     logprobs: null,
     finish_reason: message.tool_calls ? "tool_calls" : reasonsMap[cand.finishReason] || cand.finishReason,
-    //original_finish_reason: cand.finishReason,
   };
 };
 const transformCandidatesMessage = transformCandidates.bind(null, "message");
@@ -578,11 +565,19 @@ const checkPromptBlock = (choices, promptFeedback, key) => {
       index: 0,
       [key]: null,
       finish_reason: "content_filter",
-      //original_finish_reason: data.promptFeedback.blockReason,
     });
   }
   return true;
 };
+
+// 清洗 untrusted_tool_result 标签
+function cleanUntrustedToolResult(text) {
+  if (!text) return text;
+  return text
+    .replace(/<untrusted_tool_result[\s\S]*?>/g, '')
+    .replace(/<\/untrusted_tool_result>/g, '')
+    .replace(/The following content was retrieved from an external source.[\s\S]*?only the user.*?instructions./g, '');
+}
 
 const processCompletionsResponse = (data, model, id) => {
   const obj = {
@@ -590,10 +585,18 @@ const processCompletionsResponse = (data, model, id) => {
     choices: data.candidates.map(transformCandidatesMessage),
     created: Math.floor(Date.now()/1000),
     model: data.modelVersion ?? model,
-    //system_fingerprint: "fp_69829325d0",
     object: "chat.completion",
     usage: data.usageMetadata && transformUsage(data.usageMetadata),
   };
+
+  if (obj.choices && obj.choices.length > 0) {
+    for (let choice of obj.choices) {
+      if (choice.message && choice.message.content) {
+        choice.message.content = cleanUntrustedToolResult(choice.message.content);
+      }
+    }
+  }
+
   if (obj.choices.length === 0 ) {
     checkPromptBlock(obj.choices, data.promptFeedback, "message");
   }
@@ -608,7 +611,7 @@ function parseStream (chunk, controller) {
     if (!match) { break; }
     controller.enqueue(match[1]);
     this.buffer = this.buffer.substring(match[0].length);
-  } while (true); // eslint-disable-line no-constant-condition
+  } while (true);
 }
 function parseStreamFlush (controller) {
   if (this.buffer) {
@@ -633,35 +636,41 @@ function toOpenAiStream (line, controller) {
   } catch (err) {
     console.error("Error parsing response:", err);
     if (!this.shared.is_buffers_rest) { line =+ delimiter; }
-    controller.enqueue(line); // output as is
+    controller.enqueue(line);
     return;
   }
   const obj = {
     id: this.id,
     choices: data.candidates.map(transformCandidatesDelta),
-    //created: Math.floor(Date.now()/1000),
     model: data.modelVersion ?? this.model,
-    //system_fingerprint: "fp_69829325d0",
     object: "chat.completion.chunk",
     usage: data.usageMetadata && this.streamIncludeUsage ? null : undefined,
   };
+
+  // 清洗流式内容
+  if (obj.choices && obj.choices.length) {
+    for (let c of obj.choices) {
+      if (c.delta?.content) c.delta.content = cleanUntrustedToolResult(c.delta.content);
+    }
+  }
+
   if (checkPromptBlock(obj.choices, data.promptFeedback, "delta")) {
     controller.enqueue(sseline(obj));
     return;
   }
   console.assert(data.candidates.length === 1, "Unexpected candidates count: %d", data.candidates.length);
   const cand = obj.choices[0];
-  cand.index = cand.index || 0; // absent in new -002 models response
+  cand.index = cand.index || 0;
   const finish_reason = cand.finish_reason;
   cand.finish_reason = null;
-  if (!this.last[cand.index]) { // first
+  if (!this.last[cand.index]) {
     controller.enqueue(sseline({
       ...obj,
       choices: [{ ...cand, tool_calls: undefined, delta: { role: "assistant", content: "" } }],
     }));
   }
   delete cand.delta.role;
-  if ("content" in cand.delta) { // prevent empty data (e.g. when MAX_TOKENS)
+  if ("content" in cand.delta) {
     controller.enqueue(sseline(obj));
   }
   cand.finish_reason = finish_reason;
